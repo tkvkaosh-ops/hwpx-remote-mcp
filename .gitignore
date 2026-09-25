@@ -23,6 +23,7 @@ wheels/
 # Virtual Environment
 .venv/
 .venv-remote/
+node_modules/
 venv/
 ENV/
 env/

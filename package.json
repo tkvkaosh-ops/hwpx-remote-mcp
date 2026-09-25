@@ -1,0 +1,7 @@
+{
+  "name": "hwpx-remote-mcp-infrastructure",
+  "private": true,
+  "devDependencies": {
+    "railway": "3.11.0"
+  }
+}
