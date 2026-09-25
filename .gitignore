@@ -22,6 +22,7 @@ wheels/
 
 # Virtual Environment
 .venv/
+.venv-remote/
 venv/
 ENV/
 env/
@@ -46,6 +47,10 @@ Desktop.ini
 .mypy_cache/
 .coverage
 htmlcov/
+server_output*/
+test_output/
+remote_minimal_output/
+artifacts/mcp_test_download.hwpx
 
 #PDM
 .pdm-build/

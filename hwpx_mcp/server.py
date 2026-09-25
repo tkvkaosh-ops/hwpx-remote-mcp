@@ -88,6 +88,10 @@ try:
     )
     from hwpx_mcp.tools.unified_tools import register_unified_tools
     from hwpx_mcp.tools.agent_tools import register_agent_tools
+    from hwpx_mcp.tools.remote_documents import (
+        build_download_router,
+        register_remote_document_tools,
+    )
 
     logger.info("All tool modules imported successfully")
 except ImportError as e:
@@ -150,12 +154,18 @@ def initialize_server() -> None:
     logger.info("Initializing HWP Extended MCP Server...")
 
     try:
+        if os.getenv("MCP_PROFILE", "full").lower() == "remote":
+            register_remote_document_tools(mcp)
+            logger.info("Remote profile registered (3 vendor-neutral HWPX tools)")
+            return
+
         register_chart_tools(mcp, get_pyhwp_adapter)
         register_equation_tools(mcp, get_pyhwp_adapter)
         register_document_tools(mcp, get_pyhwp_adapter)
         register_template_tools(mcp, get_pyhwp_adapter)
 
         register_unified_tools(mcp)
+        register_remote_document_tools(mcp)
 
         if IS_WINDOWS:
             register_windows_tools(mcp)
@@ -1100,16 +1110,32 @@ def main():
         if config.transport == "stdio":
             mcp.run(transport="stdio")
         elif config.transport in ("http", "streamable-http"):
+            from contextlib import asynccontextmanager
+            from collections.abc import AsyncIterator
+
             import uvicorn
             from fastapi import FastAPI
+            from mcp.server.transport_security import TransportSecuritySettings
 
             from .agentic.http_api import build_agent_http_router
 
+            mcp.settings.streamable_http_path = config.path or "/mcp"
+            mcp.settings.stateless_http = config.stateless
+            mcp.settings.json_response = config.json_response
+            mcp.settings.transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=False
+            )
             mcp_app = mcp.streamable_http_app()
-            mount_path = config.path if config.path and config.path != "" else "/"
-            app = FastAPI()
+
+            @asynccontextmanager
+            async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+                async with mcp.session_manager.run():
+                    yield
+
+            app = FastAPI(lifespan=lifespan)
+            app.include_router(build_download_router())
             app.include_router(build_agent_http_router(mcp))
-            app.mount(mount_path, mcp_app)
+            app.mount("/", mcp_app)
 
             uvicorn.run(app, host=config.host, port=config.port, log_level="info")
         elif config.transport == "sse":

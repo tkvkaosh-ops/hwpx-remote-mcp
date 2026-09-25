@@ -11,8 +11,7 @@ authors = [
 ]
 dependencies = [
     # Core MCP
-    "mcp>=1.0.0",
-    "fastmcp>=0.2.0",
+    "mcp>=1.30.0,<2",
 
     "pywin32>=305; platform_system == 'Windows'",
     "pyhwpx; platform_system == 'Windows'",
@@ -29,7 +28,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     
     # HWPX creation
-    "python-hwpx>=1.9",
+    "python-hwpx>=1.9,<7",
 
     # XML & Security
     "lxml>=5.0.0",
@@ -80,6 +79,7 @@ all = [
 
 [project.scripts]
 hwpx-mcp = "hwpx_mcp.server:main"
+hwpx-remote-mcp = "hwpx_mcp.remote_server:main"
 hwpx-mcp-gateway = "hwpx_mcp.gateway_server:main"
 hwpx-mcp-eval = "hwpx_mcp.eval.run_eval:main"
 

@@ -118,10 +118,15 @@ def _fix_hwpx_for_viewer(
 
         temp_hwpx = os.path.join(temp_dir, "output.hwpx")
         with zipfile.ZipFile(temp_hwpx, "w", zipfile.ZIP_DEFLATED) as zf:
+            mimetype_path = os.path.join(extract_dir, "mimetype")
+            if os.path.exists(mimetype_path):
+                zf.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
             for root, dirs, files in os.walk(extract_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
                     arcname = os.path.relpath(file_path, extract_dir)
+                    if arcname == "mimetype":
+                        continue
                     zf.write(file_path, arcname)
 
         shutil.move(temp_hwpx, hwpx_path)
@@ -306,19 +311,22 @@ def _fix_section_xml(
                 if current_style_id:
                     child.set("charPrIDRef", current_style_id)
 
-                ctrls = child.findall(f"{{{HP_NS}}}ctrl")
-                for ctrl in ctrls:
-                    tbl = ctrl.find(f"{{{HP_NS}}}tbl")
-                    if tbl is not None:
-                        if table_index < len(table_styles):
-                            style_name = table_styles[table_index]
-                            style_def = BORDER_STYLES.get(
-                                style_name, BORDER_STYLES["default"]
-                            )
-                            style_id = style_def["id"]
-                            for tc in tbl.xpath(".//hp:tc", namespaces=NSMAP):
-                                tc.set("borderFillIDRef", style_id)
-                            table_index += 1
+                tables = child.findall(f"{{{HP_NS}}}tbl")
+                for ctrl in child.findall(f"{{{HP_NS}}}ctrl"):
+                    nested_table = ctrl.find(f"{{{HP_NS}}}tbl")
+                    if nested_table is not None:
+                        tables.append(nested_table)
+                for tbl in tables:
+                    if table_index < len(table_styles):
+                        style_name = table_styles[table_index]
+                        style_def = BORDER_STYLES.get(
+                            style_name, BORDER_STYLES["default"]
+                        )
+                        style_id = style_def["id"]
+                        tbl.set("borderFillIDRef", style_id)
+                        for tc in tbl.xpath(".//hp:tc", namespaces=NSMAP):
+                            tc.set("borderFillIDRef", style_id)
+                        table_index += 1
 
                 t_node = child.find(f"{{{HP_NS}}}t")
                 if t_node is not None and t_node.text:
@@ -372,22 +380,28 @@ def _fix_section_xml(
     ]:
         xml_str = xml_str.replace(old_ns, new_prefix)
 
-    ns_declarations = (
-        ' xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app"'
-        ' xmlns:hp10="http://www.hancom.co.kr/hwpml/2016/paragraph"'
-        ' xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core"'
-        ' xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head"'
-        ' xmlns:hhs="http://www.hancom.co.kr/hwpml/2011/history"'
-        ' xmlns:hm="http://www.hancom.co.kr/hwpml/2011/master-page"'
-        ' xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf"'
-        ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
-        ' xmlns:opf="http://www.idpf.org/2007/opf/"'
-        ' xmlns:ooxmlchart="http://www.hancom.co.kr/hwpml/2016/ooxmlchart"'
-        ' xmlns:hwpunitchar="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar"'
-        ' xmlns:epub="http://www.idpf.org/2007/ops"'
-        ' xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"'
+    extra_namespaces = {
+        "ha": "http://www.hancom.co.kr/hwpml/2011/app",
+        "hp10": "http://www.hancom.co.kr/hwpml/2016/paragraph",
+        "hc": "http://www.hancom.co.kr/hwpml/2011/core",
+        "hh": "http://www.hancom.co.kr/hwpml/2011/head",
+        "hhs": "http://www.hancom.co.kr/hwpml/2011/history",
+        "hm": "http://www.hancom.co.kr/hwpml/2011/master-page",
+        "hpf": "http://www.hancom.co.kr/schema/2011/hpf",
+        "dc": "http://purl.org/dc/elements/1.1/",
+        "opf": "http://www.idpf.org/2007/opf/",
+        "ooxmlchart": "http://www.hancom.co.kr/hwpml/2016/ooxmlchart",
+        "hwpunitchar": "http://www.hancom.co.kr/hwpml/2016/HwpUnitChar",
+        "epub": "http://www.idpf.org/2007/ops",
+        "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+    }
+    ns_declarations = "".join(
+        f' xmlns:{prefix}="{uri}"'
+        for prefix, uri in extra_namespaces.items()
+        if f"xmlns:{prefix}=" not in xml_str
     )
-    xml_str = xml_str.replace("<hs:sec", f"<hs:sec{ns_declarations}")
+    if ns_declarations:
+        xml_str = xml_str.replace("<hs:sec", f"<hs:sec{ns_declarations}", 1)
 
     with open(section_path, "w", encoding="utf-8") as f:
         f.write(xml_str)
@@ -628,7 +642,17 @@ class HwpxBuilder:
 
     def build(self, output_path: str) -> bool:
         try:
-            self._document.save(output_path)
+            if hasattr(self._document, "save_to_path"):
+                self._document.save_to_path(output_path)
+            else:
+                self._document.save(output_path)
+            if not _fix_hwpx_for_viewer(
+                output_path,
+                self._text_content,
+                self._table_styles,
+                self._text_styles_map,
+            ):
+                raise RuntimeError("HWPX viewer compatibility post-processing failed")
             logger.info(f"HWPX document created: {output_path}")
             return True
         except Exception as e:

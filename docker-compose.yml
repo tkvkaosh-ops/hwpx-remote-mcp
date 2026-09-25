@@ -1,16 +1,23 @@
 services:
-  hwp-mcp:
+  hwpx-remote-mcp:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
       - "${MCP_HTTP_HOST_PORT:-8300}:8000"
     environment:
-      - MCP_TRANSPORT=http
+      - MCP_TRANSPORT=streamable-http
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8000
       - MCP_PATH=/mcp
-      - MCP_STATELESS=false
+      - MCP_STATELESS=true
+      - MCP_JSON_RESPONSE=true
+      - HWPX_OUTPUT_DIR=/app/output
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8300}
+      - DOWNLOAD_SIGNING_KEY=${DOWNLOAD_SIGNING_KEY:-change-this-in-production}
+      - MCP_PROFILE=remote
+      - HWPX_DOWNLOAD_TTL_SECONDS=${HWPX_DOWNLOAD_TTL_SECONDS:-86400}
+      - HWPX_MAX_UPLOAD_BYTES=${HWPX_MAX_UPLOAD_BYTES:-20971520}
     volumes:
       - ./output:/app/output
     restart: unless-stopped

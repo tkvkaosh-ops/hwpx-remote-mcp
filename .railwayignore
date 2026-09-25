@@ -1,0 +1,15 @@
+.git
+.venv
+.venv-remote
+.pytest_cache
+artifacts
+server_output
+server_output_v2
+test_output
+remote_minimal_output
+electron-ui
+apps
+build
+dist
+*.pyc
+__pycache__

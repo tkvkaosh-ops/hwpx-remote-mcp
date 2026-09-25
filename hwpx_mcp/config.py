@@ -31,7 +31,9 @@ class ServerConfig:
         default_factory=lambda: os.getenv("MCP_TRANSPORT", "stdio")
     )
     host: str = field(default_factory=lambda: os.getenv("MCP_HOST", "0.0.0.0"))
-    port: int = field(default_factory=lambda: int(os.getenv("MCP_PORT", "8000")))
+    port: int = field(
+        default_factory=lambda: int(os.getenv("PORT") or os.getenv("MCP_PORT", "8000"))
+    )
     stateless: bool = field(
         default_factory=lambda: os.getenv("MCP_STATELESS", "false").lower() == "true"
     )
