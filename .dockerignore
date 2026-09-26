@@ -28,6 +28,7 @@ wheels/
 .ruff_cache/
 .coverage
 htmlcov/
+artifacts/
 
 *.md
 !README.md
