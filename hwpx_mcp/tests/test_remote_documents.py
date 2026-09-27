@@ -62,6 +62,11 @@ def test_create_remote_hwpx_document_is_valid_and_downloadable(
         assert 'charPrIDRef="201"' in section_xml
         assert 'charPrIDRef="202"' in section_xml
         assert 'borderFillIDRef="102"' in section_xml
+        # Line segments are Hancom layout-cache records.  Fabricating a single
+        # segment for a wrapping paragraph causes all wrapped lines to overlap.
+        # Generated documents intentionally omit the cache so Hancom lays out
+        # long body text and table cells from their actual properties.
+        assert "linesegarray" not in section_xml
         assert archive.getinfo("mimetype").compress_type == zipfile.ZIP_STORED
 
     app = FastAPI()

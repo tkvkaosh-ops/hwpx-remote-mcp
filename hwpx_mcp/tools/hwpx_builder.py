@@ -266,50 +266,36 @@ def _fix_section_xml(
     tree = lxml_etree.parse(section_path, parser)
     root = tree.getroot()
 
-    vertpos = 0
     field_id_counter = 1000
     table_index = 0
-    para_index = 0
-
     paragraphs = list(root.iter(f"{{{HP_NS}}}p"))
+    top_level_paragraphs = list(root.findall(f"{{{HP_NS}}}p"))
+    top_level_styles = {
+        id(paragraph): text_styles_map[index]
+        for index, paragraph in enumerate(top_level_paragraphs)
+        if index < len(text_styles_map)
+    }
+
+    # ``linesegarray`` is a cached result of Hancom's layout engine, not a
+    # generic one-line paragraph descriptor.  A paragraph that wraps must have
+    # one ``lineseg`` per rendered line, with exact glyph-derived text offsets.
+    # Synthetic single-line caches make every wrapped line reuse the same
+    # vertical position, so the text is drawn on top of itself.  Removing the
+    # stale cache is both valid HWPX and lets Hancom recalculate body and table
+    # cell layout from the actual text, font, paragraph and page properties.
+    for lineseg_array in root.xpath(".//hp:linesegarray", namespaces=NSMAP):
+        parent = lineseg_array.getparent()
+        if parent is not None:
+            parent.remove(lineseg_array)
 
     for p in paragraphs:
-        if para_index < len(text_styles_map):
-            style_name = text_styles_map[para_index]
-            if style_name and style_name in CHAR_STYLES:
-                current_style_id = CHAR_STYLES[style_name]["id"]
-
-        font_height = 1000
-        if current_style_id:
-            for style in CHAR_STYLES.values():
-                if style["id"] == current_style_id:
-                    font_height = int(style["height"])
-                    break
-
-        baseline = int(font_height * 0.85)
-        spacing = int(font_height * 0.6)
-
-        has_lineseg = any(child.tag.endswith("}linesegarray") for child in p)
-        if not has_lineseg:
-            lsa = lxml_etree.SubElement(p, f"{{{HP_NS}}}linesegarray")
-            ls = lxml_etree.SubElement(lsa, f"{{{HP_NS}}}lineseg")
-            ls.set("textpos", "0")
-            ls.set("vertpos", str(vertpos))
-            ls.set("vertsize", str(font_height))
-            ls.set("textheight", str(font_height))
-            ls.set("baseline", str(baseline))
-            ls.set("spacing", str(spacing))
-            ls.set("horzpos", "0")
-            ls.set("horzsize", "42520")
-            ls.set("flags", "393216")
-        vertpos += int(font_height * 1.6)
-
-        para_index += 1
+        style_name = top_level_styles.get(id(p), "default")
+        style = CHAR_STYLES.get(style_name, CHAR_STYLES["default"])
+        current_style_id = style["id"]
 
         for child in list(p):
             if child.tag == f"{{{HP_NS}}}run":
-                if current_style_id:
-                    child.set("charPrIDRef", current_style_id)
+                child.set("charPrIDRef", current_style_id)
 
                 tables = child.findall(f"{{{HP_NS}}}tbl")
                 for ctrl in child.findall(f"{{{HP_NS}}}ctrl"):
