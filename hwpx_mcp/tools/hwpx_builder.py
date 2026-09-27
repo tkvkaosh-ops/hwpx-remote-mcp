@@ -64,27 +64,33 @@ NSMAP = {
 
 # --- Border Styles ---
 BORDER_STYLES = {
-    "default": {"id": "101", "width": "0.5 mm", "type": "SOLID", "color": "#000000"},
-    "thin": {"id": "102", "width": "0.12 mm", "type": "SOLID", "color": "#000000"},
-    "bold": {"id": "103", "width": "0.4 mm", "type": "SOLID", "color": "#000000"},
+    # The base python-hwpx package defines border fills 1..3. HWPX IDRef values
+    # are positional references, so custom definitions must continue that
+    # sequence. Sparse IDs such as 101 are ignored by Hancom and only the red
+    # non-printing table grid is then visible in the editor.
+    "default": {"id": "4", "width": "0.5 mm", "type": "SOLID", "color": "#000000"},
+    "thin": {"id": "5", "width": "0.12 mm", "type": "SOLID", "color": "#000000"},
+    "bold": {"id": "6", "width": "0.4 mm", "type": "SOLID", "color": "#000000"},
     "double": {
-        "id": "104",
+        "id": "7",
         "width": "0.5 mm",
         "type": "DOUBLETHIN",
         "color": "#000000",
     },
-    "none": {"id": "105", "width": "0 mm", "type": "NONE", "color": "#000000"},
+    "none": {"id": "8", "width": "0 mm", "type": "NONE", "color": "#000000"},
 }
 
 # --- Char Styles (Text Styles) ---
 CHAR_STYLES = {
-    "default": {"id": "200", "height": "1000", "color": "#000000", "bold": False},
-    "title": {"id": "201", "height": "2000", "color": "#000000", "bold": True},
-    "subtitle": {"id": "202", "height": "1500", "color": "#000000", "bold": True},
-    "bold": {"id": "203", "height": "1000", "color": "#000000", "bold": True},
-    "red": {"id": "204", "height": "1000", "color": "#FF0000", "bold": False},
-    "blue": {"id": "205", "height": "1000", "color": "#0000FF", "bold": False},
-    "large": {"id": "206", "height": "1300", "color": "#000000", "bold": False},
+    # The base package defines character properties 0..6. Keep the appended
+    # property IDs contiguous for the same reason as border fills above.
+    "default": {"id": "7", "height": "1000", "color": "#000000", "bold": False},
+    "title": {"id": "8", "height": "2000", "color": "#000000", "bold": True},
+    "subtitle": {"id": "9", "height": "1500", "color": "#000000", "bold": True},
+    "bold": {"id": "10", "height": "1000", "color": "#000000", "bold": True},
+    "red": {"id": "11", "height": "1000", "color": "#FF0000", "bold": False},
+    "blue": {"id": "12", "height": "1000", "color": "#0000FF", "bold": False},
+    "large": {"id": "13", "height": "1300", "color": "#000000", "bold": False},
 }
 
 

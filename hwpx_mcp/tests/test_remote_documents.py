@@ -58,10 +58,13 @@ def test_create_remote_hwpx_document_is_valid_and_downloadable(
     assert file_path.is_file()
     assert validate_hwpx_archive(file_path)["valid"] is True
     with zipfile.ZipFile(file_path, "r") as archive:
+        header_xml = archive.read("Contents/header.xml").decode("utf-8")
         section_xml = archive.read("Contents/section0.xml").decode("utf-8")
-        assert 'charPrIDRef="201"' in section_xml
-        assert 'charPrIDRef="202"' in section_xml
-        assert 'borderFillIDRef="102"' in section_xml
+        assert '<hh:borderFill id="5"' in header_xml
+        assert '<hh:charPr id="8"' in header_xml
+        assert 'charPrIDRef="8"' in section_xml
+        assert 'charPrIDRef="9"' in section_xml
+        assert 'borderFillIDRef="5"' in section_xml
         # Line segments are Hancom layout-cache records.  Fabricating a single
         # segment for a wrapping paragraph causes all wrapped lines to overlap.
         # Generated documents intentionally omit the cache so Hancom lays out
