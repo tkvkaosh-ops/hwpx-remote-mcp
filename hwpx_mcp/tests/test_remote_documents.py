@@ -104,3 +104,68 @@ def test_download_route_returns_404_for_unknown_document(
         )
 
     assert response.status_code == 410
+
+
+def test_browser_upload_publishes_valid_template_and_claude_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    created = _create_test_document(tmp_path, monkeypatch)
+    parsed = urlparse(created["download_url"])
+    _, _, source_id, source_name = parsed.path.split("/", 3)
+    source_bytes = (tmp_path / source_id / source_name).read_bytes()
+
+    app = FastAPI()
+    app.include_router(build_download_router())
+    with TestClient(app) as client:
+        page = client.get("/upload")
+        response = client.post(
+            "/uploads",
+            content=source_bytes,
+            headers={
+                "X-File-Name": "template.hwpx",
+                "Content-Type": HWPX_MIME_TYPE,
+            },
+        )
+
+    assert page.status_code == 200
+    assert "Claude용 HWPX 서식 업로드" in page.text
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["filename"] == "template.hwpx"
+    assert payload["template_file"]["file_name"] == "template.hwpx"
+    assert payload["template_file"]["mime_type"] == HWPX_MIME_TYPE
+    assert payload["template_file"]["download_url"] == payload["download_url"]
+    assert "inspect_hwpx_template" in payload["claude_prompt"]
+    assert "fill_hwpx_template" in payload["claude_prompt"]
+    assert str(tmp_path) not in response.text
+
+
+def test_browser_upload_rejects_invalid_extension_and_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HWPX_OUTPUT_DIR", str(tmp_path))
+    app = FastAPI()
+    app.include_router(build_download_router())
+
+    with TestClient(app) as client:
+        wrong_extension = client.post(
+            "/uploads",
+            content=b"not a document",
+            headers={
+                "X-File-Name": "template.txt",
+                "Content-Type": "application/octet-stream",
+            },
+        )
+        invalid_archive = client.post(
+            "/uploads",
+            content=b"not a zip archive",
+            headers={
+                "X-File-Name": "template.hwpx",
+                "Content-Type": HWPX_MIME_TYPE,
+            },
+        )
+
+    assert wrong_extension.status_code == 400
+    assert invalid_archive.status_code == 400
+    assert "올바른 HWPX가 아닙니다" in invalid_archive.json()["detail"]

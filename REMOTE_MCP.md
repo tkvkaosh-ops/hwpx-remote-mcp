@@ -21,7 +21,7 @@ $env:DOWNLOAD_SIGNING_KEY = "replace-with-a-long-random-secret"
 python -m hwpx_mcp.remote_server
 ```
 
-MCP endpoint는 `http://localhost:8000/mcp`, health endpoint는 `http://localhost:8000/health`다.
+MCP endpoint는 `http://localhost:8000/mcp`, health endpoint는 `http://localhost:8000/health`, Claude용 HWPX 업로드 페이지는 `http://localhost:8000/upload`다.
 
 ## Docker
 
@@ -74,6 +74,15 @@ HWPX_OUTPUT_DIR=/app/output
 ## Claude
 
 Claude Custom Connector에 공개 HTTPS MCP URL(`https://<domain>/mcp`)을 등록한다. 인증 없는 개발용 endpoint이므로 연결 후 세 도구가 표시되는지 확인한다.
+
+Claude.ai의 기본 파일 첨부기는 현재 `.hwpx`를 허용하지 않는다. 새 문서는 `create_hwpx_document`로 바로 만들 수 있지만 기존 HWPX 서식을 채울 때는 다음 우회 경로를 사용한다.
+
+1. `https://<domain>/upload`에서 HWPX 원본을 선택한다.
+2. 서버가 ZIP/XML 구조를 검사하고 만료되는 서명 URL과 `template_file` 객체를 만든다.
+3. 페이지의 **요청문 복사**를 누르고 Claude 채팅에 붙여넣는다.
+4. Claude가 `inspect_hwpx_template`와 `fill_hwpx_template`를 호출하면 완성본 다운로드 URL을 돌려준다.
+
+업로드된 원본도 UUID로 격리되고 결과 파일과 동일한 만료 정책을 적용받는다. 서버 내부 경로는 Claude에 노출하지 않는다.
 
 ## ChatGPT
 
