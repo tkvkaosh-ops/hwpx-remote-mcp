@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +18,7 @@ from hwpx_mcp.config import get_config
 from hwpx_mcp.tools.remote_documents import (
     build_download_router,
     register_remote_document_tools,
+    _cleanup_expired_artifacts,
 )
 
 logger = logging.getLogger("hwpx-remote-mcp")
@@ -36,15 +40,36 @@ def build_http_app() -> FastAPI:
     mcp.settings.streamable_http_path = config.path or "/mcp"
     mcp.settings.stateless_http = config.stateless
     mcp.settings.json_response = config.json_response
+    hosts = ["127.0.0.1:*", "localhost:*"]
+    for value in (os.getenv("PUBLIC_BASE_URL", ""), os.getenv("RAILWAY_PUBLIC_DOMAIN", "")):
+        if value:
+            hosts.append(urlparse(value if "://" in value else "https://" + value).netloc)
     mcp.settings.transport_security = TransportSecuritySettings(
-        enable_dns_rebinding_protection=False
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
     )
     mcp_app = mcp.streamable_http_app()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        async def cleanup_loop() -> None:
+            while True:
+                try:
+                    await asyncio.to_thread(_cleanup_expired_artifacts)
+                except OSError as error:
+                    logger.warning("Artifact cleanup failed (%s)", type(error).__name__)
+                await asyncio.sleep(60)
+
+        cleanup_task = asyncio.create_task(cleanup_loop())
         async with mcp.session_manager.run():
-            yield
+            try:
+                yield
+            finally:
+                cleanup_task.cancel()
+                try:
+                    await cleanup_task
+                except asyncio.CancelledError:
+                    pass
 
     app = FastAPI(
         title="HWPX Remote MCP",
@@ -74,6 +99,7 @@ def main() -> None:
         host=config.host,
         port=config.port,
         log_level="info",
+        access_log=False,  # Signed download tokens must not enter access logs.
     )
 
 

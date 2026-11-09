@@ -1,5 +1,7 @@
 # HWPX Remote MCP
 
+이 Remote MCP 프로필은 OpenAI·Anthropic 모델 API를 호출하지 않으며 모델 API 키가 필요하지 않다. 자연어 해석은 연결한 ChatGPT·Claude가 수행하고, 서버는 구조화된 작업 인수를 처리한다. `DOWNLOAD_SIGNING_KEY`(기존 `HWPX_SIGNING_KEY`도 지원)는 다운로드 링크 보호용 서버 내부 비밀값이며 모델 API 키가 아니다.
+
 이 서버는 Claude, ChatGPT, OpenAI Responses API가 같은 `/mcp` endpoint로 사용할 수 있는 표준 Streamable HTTP MCP 서버다. 원격 프로필은 아래 세 도구만 공개한다.
 
 - `create_hwpx_document`: 새 HWPX 생성
@@ -21,7 +23,7 @@ $env:DOWNLOAD_SIGNING_KEY = "replace-with-a-long-random-secret"
 python -m hwpx_mcp.remote_server
 ```
 
-MCP endpoint는 `http://localhost:8000/mcp`, health endpoint는 `http://localhost:8000/health`, Claude용 HWPX 업로드 페이지는 `http://localhost:8000/upload`다.
+MCP endpoint는 `http://localhost:8000/mcp`, health endpoint는 `http://localhost:8000/health`, ChatGPT·Claude 공통 업로드 페이지는 `http://localhost:8000/upload`다.
 
 ## Docker
 
@@ -75,7 +77,7 @@ HWPX_OUTPUT_DIR=/app/output
 
 Claude Custom Connector에 공개 HTTPS MCP URL(`https://<domain>/mcp`)을 등록한다. 인증 없는 개발용 endpoint이므로 연결 후 세 도구가 표시되는지 확인한다.
 
-Claude.ai의 기본 파일 첨부기는 현재 `.hwpx`를 허용하지 않는다. 새 문서는 `create_hwpx_document`로 바로 만들 수 있지만 기존 HWPX 서식을 채울 때는 다음 우회 경로를 사용한다.
+새 문서는 `create_hwpx_document`로 바로 만든다. 사용 중인 Claude 환경에서 HWPX 첨부 파일을 MCP에 전달할 수 없으면 공통 업로드 페이지를 사용한다.
 
 1. `https://<domain>/upload`에서 HWPX 원본을 선택한다.
 2. 서버가 ZIP/XML 구조를 검사하고 만료되는 서명 URL과 `template_file` 객체를 만든다.
@@ -110,6 +112,15 @@ python examples/openai_responses_mcp.py
 - ZIP/XML 구조와 HWPX mimetype 검사
 - 임시 작업공간 자동 삭제
 - 결과 UUID 분리, HMAC 서명 다운로드, 기본 24시간 만료
-- 만료 artifact는 다음 생성 요청 또는 만료 URL 접근 시 삭제
+- 만료 artifact는 저장된 만료 정보에 따라 약 60초 간격으로 정리
+- DNS 검사 후 검증한 IP에 직접 연결하며 원래 호스트의 TLS 인증서와 SNI를 유지
+- 이 서버가 발급한 서명 URL은 검증 후 해당 파일만 직접 복사하며 내부망 다운로드 예외가 필요 없음
+- 만료 값을 변조한 요청은 아직 유효한 파일을 삭제하지 않음
+- 서식 채우기는 부분 글자 모양을 유지하며 수정된 문단의 줄 배치 캐시만 재계산하도록 제거
+- 모델 응답과 HTTP access log에 임시 서버 경로나 서명 토큰을 노출하지 않음
+
+## API 키 없는 검증
+
+`pytest hwpx_mcp/tests/test_remote_server.py hwpx_mcp/tests/test_remote_documents.py hwpx_mcp/tests/test_hwpx_templates.py hwpx_mcp/tests/test_remote_hardening.py -q`로 Remote MCP 범위의 회귀 테스트를 실행한다. 공식 MCP SDK 클라이언트나 MCP Inspector는 모델 API 키 없이 initialize, tools/list, tools/call, 다운로드를 검증할 수 있다. 위 OpenAI Responses API 예제의 실호출은 별도 API 인증이 있는 경우에만 수행한다.
 
 Linux remote 서버는 native binary `.hwp` 편집을 제공하지 않는다. 서식 보존 편집 입력은 `.hwpx`를 사용한다.

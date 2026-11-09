@@ -23,7 +23,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse, parse_qs
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import FileResponse, HTMLResponse
@@ -82,14 +82,14 @@ _UPLOAD_PAGE = """<!doctype html>
   </style>
 </head>
 <body><main>
-  <h1>Claude용 HWPX 서식 업로드</h1>
-  <p>Claude 웹은 HWPX 직접 첨부를 지원하지 않습니다. 여기서 서식을 올린 뒤 생성된 문장을 Claude 채팅에 붙여넣으세요.</p>
+  <h1>HWPX 서식 업로드</h1>
+  <p>ChatGPT 또는 Claude에서 파일을 직접 전달하기 어려울 때 사용해요. 서식을 올린 뒤 생성된 요청문을 연결된 AI 채팅에 붙여넣어 주세요.</p>
   <label class="drop" for="file"><strong id="label">HWPX 파일 선택</strong><br><small>최대 20MB · ZIP/XML 구조 자동검사</small></label>
   <input id="file" type="file" accept=".hwpx,application/vnd.hancom.hwpx">
   <button id="upload" disabled>보안 링크 만들기</button>
   <p id="status"></p>
   <section class="result" id="result">
-    <strong>Claude에 붙여넣을 요청문</strong>
+    <strong>ChatGPT·Claude에 붙여넣을 요청문</strong>
     <textarea id="prompt" readonly></textarea>
     <button id="copy">요청문 복사</button>
     <p><a id="download" rel="noopener">업로드한 원본 확인</a></p>
@@ -119,7 +119,7 @@ upload.addEventListener('click', async () => {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || '업로드 실패');
-    document.querySelector('#prompt').value = data.claude_prompt;
+    document.querySelector('#prompt').value = data.prompt;
     document.querySelector('#download').href = data.download_url;
     result.style.display = 'block'; status.textContent = '완료';
   } catch (error) {
@@ -171,7 +171,7 @@ def _public_base_url() -> str:
 
 
 def _signing_key() -> bytes:
-    configured = os.getenv("DOWNLOAD_SIGNING_KEY", "")
+    configured = os.getenv("DOWNLOAD_SIGNING_KEY") or os.getenv("HWPX_SIGNING_KEY", "")
     return configured.encode("utf-8") if configured else _EPHEMERAL_SIGNING_KEY
 
 
@@ -204,6 +204,32 @@ def _cleanup_expired_artifacts() -> None:
 def _signature(document_id: str, filename: str, expires: int) -> str:
     message = f"{document_id}:{filename}:{expires}".encode("utf-8")
     return hmac.new(_signing_key(), message, hashlib.sha256).hexdigest()
+
+
+def resolve_published_download(url: str) -> Path | None:
+    """Resolve only this server's authenticated, unexpired artifact URLs."""
+    parsed, base = urlparse(url), urlparse(_public_base_url())
+    if (parsed.scheme, parsed.netloc) != (base.scheme, base.netloc):
+        return None
+    match = re.fullmatch(r"/downloads/([0-9a-f]{32})/([^/]+)", parsed.path)
+    if not match:
+        raise ValueError("invalid published template URL")
+    document_id, encoded_name = match.groups()
+    filename = normalize_filename(unquote(encoded_name))
+    query = parse_qs(parsed.query)
+    try:
+        expires = int(query["expires"][0])
+        signature = query["signature"][0]
+    except (KeyError, ValueError, IndexError):
+        raise ValueError("invalid published template signature") from None
+    if not hmac.compare_digest(signature, _signature(document_id, filename, expires)):
+        raise ValueError("invalid published template signature")
+    if expires < int(time.time()):
+        raise ValueError("published template link expired")
+    path = (get_output_dir() / document_id / filename).resolve()
+    if path.parent != get_output_dir() / document_id or not path.is_file():
+        raise ValueError("published template was not found")
+    return path
 
 
 def _result_metadata(
@@ -306,10 +332,6 @@ def validate_hwpx_archive(file_path: Path) -> dict[str, Any]:
 
         result["is_zip"] = True
         with zipfile.ZipFile(file_path, "r") as archive:
-            corrupt_member = archive.testzip()
-            if corrupt_member:
-                result["errors"].append(f"corrupt ZIP member: {corrupt_member}")
-
             members = set(archive.namelist())
             infos = archive.infolist()
             unsafe_members = [
@@ -317,6 +339,7 @@ def validate_hwpx_archive(file_path: Path) -> dict[str, Any]:
                 for info in infos
                 if info.filename.startswith(("/", "\\"))
                 or ".." in Path(info.filename.replace("\\", "/")).parts
+                or re.match(r"^[A-Za-z]:", info.filename)
             ]
             if unsafe_members:
                 result["errors"].append("unsafe archive member paths detected")
@@ -328,6 +351,15 @@ def validate_hwpx_archive(file_path: Path) -> dict[str, Any]:
             result["uncompressed_size_bytes"] = total_uncompressed
             if total_uncompressed > max_uncompressed:
                 result["errors"].append("archive uncompressed size exceeds limit")
+            if len(infos) > 5000 or len(members) != len(infos):
+                result["errors"].append("too many or duplicate archive members")
+            # Check declared sizes and paths before decompressing any member.
+            if result["errors"]:
+                result["valid"] = False
+                return result
+            corrupt_member = archive.testzip()
+            if corrupt_member:
+                result["errors"].append(f"corrupt ZIP member: {corrupt_member}")
 
             missing = sorted(REQUIRED_HWPX_PARTS - members)
             result["required_parts_present"] = not missing
@@ -366,6 +398,7 @@ def create_remote_hwpx_document(
     sections: list[dict[str, Any]] | None = None,
     tables: list[dict[str, Any]] | None = None,
     formatting: dict[str, Any] | None = None,
+    paragraphs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a downloadable HWPX and return JSON-serializable metadata."""
     _cleanup_expired_artifacts()
@@ -394,6 +427,8 @@ def create_remote_hwpx_document(
             builder.add_paragraph(title.strip(), style=title_style)
 
         for paragraph in _paragraphs(document_content):
+            builder.add_paragraph(paragraph, style=body_style)
+        for paragraph in _paragraphs(paragraphs or []):
             builder.add_paragraph(paragraph, style=body_style)
 
         for section in sections:
@@ -459,6 +494,13 @@ def create_remote_hwpx_document(
         raise
 
 
+def _public_error(error: Exception) -> str:
+    """Keep temporary paths, signed source URLs, and server details private."""
+    if isinstance(error, ValueError):
+        return str(error)
+    return "Document processing failed; check the HWPX input and try again."
+
+
 def register_remote_document_tools(mcp: Any) -> None:
     """Register the vendor-neutral Remote MCP document tools."""
 
@@ -480,6 +522,7 @@ def register_remote_document_tools(mcp: Any) -> None:
         sections: list[dict[str, Any]] | None = None,
         tables: list[dict[str, Any]] | None = None,
         formatting: dict[str, Any] | None = None,
+        paragraphs: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a native HWPX document and return a public download URL.
 
@@ -498,15 +541,16 @@ def register_remote_document_tools(mcp: Any) -> None:
                 sections,
                 tables,
                 formatting,
+                paragraphs,
             )
         except Exception as exc:
-            logger.exception("Remote HWPX creation failed")
+            logger.warning("Remote HWPX creation failed (%s)", type(exc).__name__)
             return {
                 "success": False,
                 "filename": filename,
                 "mime_type": HWPX_MIME_TYPE,
                 "download_url": None,
-                "error": str(exc),
+                "error": _public_error(exc),
             }
 
     file_tool_meta = {"openai/fileParams": ["template_file"]}
@@ -539,8 +583,8 @@ def register_remote_document_tools(mcp: Any) -> None:
                 inspect_remote_hwpx_template, template_file
             )
         except Exception as exc:
-            logger.exception("HWPX template inspection failed")
-            return {"success": False, "error": str(exc)}
+            logger.warning("HWPX template inspection failed (%s)", type(exc).__name__)
+            return {"success": False, "error": _public_error(exc)}
 
     @mcp.tool(
         title="Fill HWPX template",
@@ -581,13 +625,13 @@ def register_remote_document_tools(mcp: Any) -> None:
                 instructions,
             )
         except Exception as exc:
-            logger.exception("HWPX template fill failed")
+            logger.warning("HWPX template fill failed (%s)", type(exc).__name__)
             return {
                 "success": False,
                 "filename": filename,
                 "mime_type": HWPX_MIME_TYPE,
                 "download_url": None,
-                "error": str(exc),
+                "error": _public_error(exc),
             }
 
     register_hwpx_widget(mcp)
@@ -683,12 +727,13 @@ def build_download_router() -> APIRouter:
             "file_name": filename,
         }
         result["template_file"] = file_object
-        result["claude_prompt"] = (
+        result["prompt"] = (
             "이 HWPX 서식을 inspect_hwpx_template로 분석한 뒤 기존 표, 글꼴, 문단, "
             "이미지, 머리말/꼬리말을 최대한 유지하여 fill_hwpx_template로 작성해줘. "
             "template_file 인수에는 다음 객체를 그대로 사용해: "
             + json.dumps(file_object, ensure_ascii=False)
         )
+        result["claude_prompt"] = result["prompt"]  # Preserve existing clients.
         return result
 
     @router.get("/downloads/{document_id}/{filename}", include_in_schema=False)
@@ -706,9 +751,8 @@ def build_download_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="Document not found") from exc
 
         if expires < int(time.time()):
-            expired_dir = (get_output_dir() / document_id).resolve()
-            if expired_dir.parent == get_output_dir() and expired_dir.is_dir():
-                shutil.rmtree(expired_dir, ignore_errors=True)
+            # Never delete a document based on attacker-controlled expiry data.
+            # The scheduled cleanup uses the server's stored metadata instead.
             raise HTTPException(status_code=410, detail="Download link expired")
         expected_signature = _signature(document_id, safe_filename, expires)
         if not hmac.compare_digest(signature, expected_signature):
@@ -724,6 +768,9 @@ def build_download_router() -> APIRouter:
             path=file_path,
             media_type=HWPX_MIME_TYPE,
             filename=safe_filename,
+            headers={"Cache-Control": "private, no-store",
+                     "X-Content-Type-Options": "nosniff",
+                     "Referrer-Policy": "no-referrer"},
         )
 
     return router

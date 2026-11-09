@@ -8,7 +8,9 @@ import logging
 import os
 import re
 import socket
+import shutil
 import tempfile
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -41,8 +43,8 @@ class OpenAIFile(BaseModel):
 
     download_url: AnyHttpUrl
     file_id: str = Field(min_length=1, max_length=512)
-    mime_type: str | None = None
-    file_name: str | None = None
+    mime_type: str = ""
+    file_name: str = ""
 
 
 def _local_name(element: etree._Element) -> str:
@@ -94,6 +96,40 @@ def _validate_remote_url(url: str) -> None:
             raise ValueError("template download_url resolves to a non-public address")
 
 
+class _PinnedDownloadTransport(httpx.BaseTransport):
+    """Connect to a validated IP while retaining TLS SNI and HTTP Host."""
+
+    def __init__(self) -> None:
+        self._transport = httpx.HTTPTransport(retries=0)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if _allow_private_downloads():
+            return self._transport.handle_request(request)
+        _validate_remote_url(str(request.url))
+        addresses = socket.getaddrinfo(
+            request.url.host, request.url.port or 443, type=socket.SOCK_STREAM
+        )
+        if not addresses:
+            raise ValueError("template download host could not be resolved")
+        for item in addresses:
+            if not ipaddress.ip_address(item[4][0]).is_global:
+                raise ValueError("template download_url resolves to a non-public address")
+        pinned = httpx.Request(
+            request.method,
+            request.url.copy_with(host=addresses[0][4][0]),
+            headers=request.headers,
+            stream=request.stream,
+            extensions={
+                **request.extensions,
+                "sni_hostname": request.url.raw_host.decode("ascii"),
+            },
+        )
+        return self._transport.handle_request(pinned)
+
+    def close(self) -> None:
+        self._transport.close()
+
+
 def _download_template(file_info: OpenAIFile, destination: Path) -> dict[str, Any]:
     file_name = file_info.file_name or "template.hwpx"
     if not file_name.lower().endswith(".hwpx"):
@@ -105,10 +141,23 @@ def _download_template(file_info: OpenAIFile, destination: Path) -> dict[str, An
 
     max_bytes = int(os.getenv("HWPX_MAX_UPLOAD_BYTES", "20971520"))
     current_url = str(file_info.download_url)
+    from hwpx_mcp.tools.remote_documents import resolve_published_download, validate_hwpx_archive
+    published = resolve_published_download(current_url)
+    if published is not None:
+        if published.stat().st_size > max_bytes:
+            raise ValueError("template file exceeds upload size limit")
+        shutil.copyfile(published, destination)
+        validation = validate_hwpx_archive(destination)
+        if not validation.get("valid"):
+            raise ValueError("published template is not a valid HWPX")
+        return validation
     redirects = 0
     headers = {"User-Agent": "hwpx-remote-mcp/1.0"}
 
-    with httpx.Client(timeout=30.0, follow_redirects=False, headers=headers) as client:
+    with httpx.Client(
+        timeout=30.0, follow_redirects=False, headers=headers,
+        transport=_PinnedDownloadTransport(), trust_env=False,
+    ) as client:
         while True:
             _validate_remote_url(current_url)
             with client.stream("GET", current_url) as response:
@@ -153,9 +202,9 @@ def _download_template(file_info: OpenAIFile, destination: Path) -> dict[str, An
 
 def _section_names(archive: zipfile.ZipFile) -> list[str]:
     return sorted(
-        name
-        for name in archive.namelist()
-        if re.fullmatch(r"Contents/section\d+\.xml", name)
+        (name for name in archive.namelist()
+         if re.fullmatch(r"Contents/section\d+\.xml", name)),
+        key=lambda name: int(re.search(r"section(\d+)", name).group(1)),
     )
 
 
@@ -164,7 +213,7 @@ def _text_nodes(element: etree._Element) -> list[etree._Element]:
 
 
 def _element_text(element: etree._Element) -> str:
-    return "".join(node.text or "" for node in _text_nodes(element)).strip()
+    return "".join("".join(node.itertext()) for node in _text_nodes(element)).strip()
 
 
 def inspect_hwpx_file(file_path: Path) -> dict[str, Any]:
@@ -176,10 +225,10 @@ def inspect_hwpx_file(file_path: Path) -> dict[str, Any]:
 
     with zipfile.ZipFile(file_path, "r") as archive:
         section_names = _section_names(archive)
+        table_index = 0
         for section_index, section_name in enumerate(section_names):
             root = SecureXmlParser.parse_string(archive.read(section_name))
             paragraph_index = 0
-            table_index = 0
 
             for element in root.iter():
                 name = _local_name(element)
@@ -316,6 +365,8 @@ def _set_container_text(container: etree._Element, value: str) -> None:
         nodes[0].text = value
         for node in nodes[1:]:
             node.text = ""
+        for node in nodes:
+            _invalidate_paragraph_layout(node)
         return
 
     paragraph = next(
@@ -327,6 +378,17 @@ def _set_container_text(container: etree._Element, value: str) -> None:
     run = etree.SubElement(paragraph, f"{{{namespace}}}run")
     text = etree.SubElement(run, f"{{{namespace}}}t")
     text.text = value
+
+
+def _invalidate_paragraph_layout(element: etree._Element) -> None:
+    """Let Hancom recalculate line positions without changing paragraph styles."""
+    paragraph = element if _local_name(element) == "p" else next(
+        (parent for parent in element.iterancestors() if _local_name(parent) == "p"), None
+    )
+    if paragraph is not None:
+        for child in list(paragraph):
+            if _local_name(child) == "linesegarray":
+                paragraph.remove(child)
 
 
 def _replace_field_values(
@@ -351,6 +413,7 @@ def _replace_field_values(
                 active_begin = element
         elif name == "t" and active_name is not None:
             element.text = active_value if not wrote_value else ""
+            _invalidate_paragraph_layout(element)
             wrote_value = True
         elif name == "fieldEnd" and active_name is not None:
             if not wrote_value and active_begin is not None:
@@ -369,27 +432,40 @@ def _replace_field_values(
 def _replace_text(root: etree._Element, replacements: dict[str, str]) -> list[str]:
     applied: list[str] = []
     for paragraph in [element for element in root.iter() if _local_name(element) == "p"]:
-        nodes = _text_nodes(paragraph)
-        if not nodes:
+        # Parent paragraphs may contain whole tables. Never join separate cells.
+        containers = [node for node in _text_nodes(paragraph)
+                 if next((parent for parent in node.iterancestors()
+                          if _local_name(parent) == "p"), None) is paragraph]
+        slots = []
+        for container in containers:
+            slots.append((container, "text"))
+            for child in container.iterdescendants():
+                if child.text:
+                    slots.append((child, "text"))
+                slots.append((child, "tail"))
+        if not slots:
             continue
 
         for source, target in replacements.items():
-            replaced_directly = False
-            for node in nodes:
-                current = node.text or ""
-                if source in current:
-                    node.text = current.replace(source, target)
-                    replaced_directly = True
-            if replaced_directly:
+            if not source:
+                raise ValueError("replacement search text must not be empty")
+            combined = "".join(getattr(node, attribute) or "" for node, attribute in slots)
+            matches = list(re.finditer(re.escape(source), combined))
+            for match in reversed(matches):
+                position = 0
+                for node, attribute in slots:
+                    text = getattr(node, attribute) or ""
+                    left, right = position, position + len(text)
+                    position = right
+                    if right <= match.start() or left >= match.end():
+                        continue
+                    start = max(0, match.start() - left)
+                    end = min(len(text), match.end() - left)
+                    inserted = target if left <= match.start() < right else ""
+                    setattr(node, attribute, text[:start] + inserted + text[end:])
+            if matches:
                 applied.append(source)
-                continue
-
-            combined = "".join(node.text or "" for node in nodes)
-            if source in combined:
-                nodes[0].text = combined.replace(source, target)
-                for node in nodes[1:]:
-                    node.text = ""
-                applied.append(source)
+                _invalidate_paragraph_layout(paragraph)
     return applied
 
 
@@ -435,6 +511,8 @@ def _apply_table_values(
                         break
                 if matched:
                     break
+            if not matched:
+                raise ValueError(f"table label not found: {label}")
             continue
 
         table_index = int(spec.get("table_index", 0))
@@ -460,6 +538,9 @@ def _apply_table_values(
 
 def _new_paragraph_like(source: etree._Element, content: str) -> etree._Element:
     paragraph = etree.Element(source.tag, attrib=dict(source.attrib), nsmap=source.nsmap)
+    paragraph.set("id", str(uuid.uuid4().int & 0x7FFFFFFF))
+    paragraph.set("pageBreak", "0")
+    paragraph.set("columnBreak", "0")
     source_run = next(
         (child for child in source if _local_name(child) == "run"), None
     )
@@ -531,6 +612,10 @@ def fill_hwpx_file(
     table_cell_values: list[dict[str, Any]],
     paragraphs: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    if template_path.resolve() == output_path.resolve():
+        raise ValueError("output must be a new file; the original cannot be overwritten")
+    if not any((field_values, replacements, table_cell_values, paragraphs)):
+        raise ValueError("provide structured field values, replacements, table cells, or paragraphs")
     modified_parts: dict[str, bytes] = {}
     applied_fields: list[str] = []
     applied_replacements: list[str] = []
@@ -555,8 +640,19 @@ def fill_hwpx_file(
         applied_table_cells = _apply_table_values(roots, table_cell_values)
         applied_paragraphs = _insert_paragraphs(roots, paragraphs)
 
+        missing_fields = [key for key in field_values
+                          if key not in applied_fields and not any(
+                              marker in applied_replacements for marker in
+                              (f"{{{{{key}}}}}", f"${{{key}}}", f"<<{key}>>"))]
+        missing_replacements = sorted(set(replacements) - set(applied_replacements))
+        if missing_fields or missing_replacements:
+            raise ValueError("editable text not found: " + ", ".join(
+                [*missing_fields, *missing_replacements]))
         for section_name, root in zip(section_names, roots):
-            modified_parts[section_name] = _serialize_xml(root)
+            encoded = _serialize_xml(root)
+            original = source.read(section_name)
+            if etree.tostring(root) != etree.tostring(SecureXmlParser.parse_string(original)):
+                modified_parts[section_name] = encoded
 
         preview_lines = [
             _element_text(paragraph)

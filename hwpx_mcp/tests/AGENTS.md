@@ -16,3 +16,4 @@ pytest hwpx_mcp/tests/ -v
 
 ## Notes
 - Async tests use pytest-asyncio (see `pyproject.toml` pytest config).
+- Remote document regression scope: `pytest hwpx_mcp/tests/test_remote_server.py hwpx_mcp/tests/test_remote_documents.py hwpx_mcp/tests/test_hwpx_templates.py hwpx_mcp/tests/test_remote_hardening.py -q`. This scope needs only `requirements-remote.txt`, pytest, and pytest-asyncio; model API credentials are not required.

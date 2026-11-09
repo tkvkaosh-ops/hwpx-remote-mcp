@@ -128,7 +128,7 @@ def test_browser_upload_publishes_valid_template_and_claude_prompt(
         )
 
     assert page.status_code == 200
-    assert "Claude용 HWPX 서식 업로드" in page.text
+    assert "ChatGPT" in page.text and "Claude" in page.text
     assert response.status_code == 200
     payload = response.json()
     assert payload["success"] is True
@@ -137,6 +137,7 @@ def test_browser_upload_publishes_valid_template_and_claude_prompt(
     assert payload["template_file"]["mime_type"] == HWPX_MIME_TYPE
     assert payload["template_file"]["download_url"] == payload["download_url"]
     assert "inspect_hwpx_template" in payload["claude_prompt"]
+    assert payload["prompt"] == payload["claude_prompt"]
     assert "fill_hwpx_template" in payload["claude_prompt"]
     assert str(tmp_path) not in response.text
 
