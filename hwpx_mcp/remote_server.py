@@ -41,7 +41,8 @@ def build_http_app() -> FastAPI:
     mcp.settings.stateless_http = config.stateless
     mcp.settings.json_response = config.json_response
     hosts = ["127.0.0.1:*", "localhost:*"]
-    for value in (os.getenv("PUBLIC_BASE_URL", ""), os.getenv("RAILWAY_PUBLIC_DOMAIN", "")):
+    for value in (os.getenv("PUBLIC_BASE_URL", ""), os.getenv("RAILWAY_PUBLIC_DOMAIN", ""),
+                  os.getenv("RENDER_EXTERNAL_URL", "")):
         if value:
             hosts.append(urlparse(value if "://" in value else "https://" + value).netloc)
     mcp.settings.transport_security = TransportSecuritySettings(

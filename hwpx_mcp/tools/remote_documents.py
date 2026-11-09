@@ -84,7 +84,7 @@ _UPLOAD_PAGE = """<!doctype html>
 <body><main>
   <h1>HWPX 서식 업로드</h1>
   <p>ChatGPT 또는 Claude에서 파일을 직접 전달하기 어려울 때 사용해요. 서식을 올린 뒤 생성된 요청문을 연결된 AI 채팅에 붙여넣어 주세요.</p>
-  <label class="drop" for="file"><strong id="label">HWPX 파일 선택</strong><br><small>최대 20MB · ZIP/XML 구조 자동검사</small></label>
+  <label class="drop" for="file"><strong id="label">HWPX 파일 선택</strong><br><small>최대 __MAX_UPLOAD_MB__MB · ZIP/XML 구조 자동검사</small></label>
   <input id="file" type="file" accept=".hwpx,application/vnd.hancom.hwpx">
   <button id="upload" disabled>보안 링크 만들기</button>
   <p id="status"></p>
@@ -159,6 +159,10 @@ def _public_base_url() -> str:
     configured = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
     if configured:
         return configured
+
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    if render_url:
+        return render_url
 
     railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
     if railway_domain:
@@ -353,6 +357,10 @@ def validate_hwpx_archive(file_path: Path) -> dict[str, Any]:
                 result["errors"].append("archive uncompressed size exceeds limit")
             if len(infos) > 5000 or len(members) != len(infos):
                 result["errors"].append("too many or duplicate archive members")
+            max_xml = int(os.getenv("HWPX_MAX_XML_BYTES", "33554432"))
+            if any(info.file_size > max_xml for info in infos
+                   if info.filename.lower().endswith((".xml", ".hpf"))):
+                result["errors"].append("XML member size exceeds limit")
             # Check declared sizes and paths before decompressing any member.
             if result["errors"]:
                 result["valid"] = False
@@ -651,7 +659,9 @@ def build_download_router() -> APIRouter:
 
     @router.get("/upload", include_in_schema=False, response_class=HTMLResponse)
     async def upload_page() -> HTMLResponse:
-        return HTMLResponse(_UPLOAD_PAGE)
+        return HTMLResponse(_UPLOAD_PAGE.replace(
+            "__MAX_UPLOAD_MB__", f"{_max_upload_bytes() / 1048576:g}"
+        ))
 
     @router.post("/uploads", include_in_schema=False)
     async def upload_template(request: Request) -> dict[str, Any]:

@@ -73,6 +73,16 @@ HWPX_OUTPUT_DIR=/app/output
 
 배포 재시작 뒤에도 유효기간 내 결과 파일을 유지하려면 Railway volume을 `/app/output`에 mount한다.
 
+## Render Free
+
+`render.yaml`은 기존 Dockerfile을 재사용하며 `plan: free`로 고정한다. Render의 `RENDER_EXTERNAL_URL`에서 HTTPS 다운로드 주소를 자동 구성한다. 다운로드 서명용 내부 비밀값은 Render가 생성하며 모델 API 키를 입력할 필요가 없다.
+
+- 최대 업로드 10 MiB, 압축 해제 합계 32 MiB, 단일 XML 8 MiB.
+- 파일 링크는 최대 15분 동안 사용할 수 있으며 재배포·재시작 시 더 일찍 사라질 수 있다. 영구 보관함이 아니다.
+- 15분 미사용 시 절전하고 첫 접속에 약 1분이 걸릴 수 있다. 사용 전에 `/upload`를 열어 서버를 깨운 뒤 AI 도구를 호출한다.
+- 무료 서비스의 임시 디스크에 문서를 장기 보관하지 않는다. 완성본은 생성 후 바로 다운로드한다.
+- Render 계정 연결 및 필요한 GitHub 접근 승인은 사용자가 직접 수행한다. 유료 서비스나 디스크는 생성하지 않는다.
+
 ## Claude
 
 Claude Custom Connector에 공개 HTTPS MCP URL(`https://<domain>/mcp`)을 등록한다. 인증 없는 개발용 endpoint이므로 연결 후 세 도구가 표시되는지 확인한다.

@@ -9,7 +9,7 @@ from lxml import etree
 from hwpx_mcp.tools import hwpx_templates
 from hwpx_mcp.tools.hwpx_templates import OpenAIFile, _replace_text, _download_template
 from hwpx_mcp.tools.remote_documents import (
-    build_download_router, create_remote_hwpx_document, validate_hwpx_archive,
+    build_download_router, create_remote_hwpx_document, validate_hwpx_archive, _public_base_url,
 )
 
 
@@ -115,3 +115,14 @@ def test_unsigned_private_url_is_rejected(monkeypatch):
     monkeypatch.delenv('ALLOW_PRIVATE_DOWNLOADS', raising=False)
     with pytest.raises(ValueError, match='HTTPS'):
         hwpx_templates._validate_remote_url('http://127.0.0.1/private')
+
+
+def test_render_url_and_upload_limit_are_used_without_manual_base_url(monkeypatch):
+    monkeypatch.delenv('PUBLIC_BASE_URL', raising=False)
+    monkeypatch.setenv('RENDER_EXTERNAL_URL', 'https://example.onrender.com')
+    monkeypatch.setenv('HWPX_MAX_UPLOAD_BYTES', str(10 * 1048576))
+    assert _public_base_url() == 'https://example.onrender.com'
+    app = FastAPI()
+    app.include_router(build_download_router())
+    with TestClient(app) as client:
+        assert '최대 10MB' in client.get('/upload').text
