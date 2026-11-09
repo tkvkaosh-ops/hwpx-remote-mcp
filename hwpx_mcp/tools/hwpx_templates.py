@@ -100,7 +100,10 @@ class _PinnedDownloadTransport(httpx.BaseTransport):
     """Connect to a validated IP while retaining TLS SNI and HTTP Host."""
 
     def __init__(self) -> None:
-        self._transport = httpx.HTTPTransport(retries=0)
+        # Redirects may share an IP but use different TLS hostnames.
+        self._transport = httpx.HTTPTransport(
+            retries=0, limits=httpx.Limits(max_keepalive_connections=0)
+        )
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         if _allow_private_downloads():
