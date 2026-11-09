@@ -133,4 +133,6 @@ python examples/openai_responses_mcp.py
 
 `pytest hwpx_mcp/tests/test_remote_server.py hwpx_mcp/tests/test_remote_documents.py hwpx_mcp/tests/test_hwpx_templates.py hwpx_mcp/tests/test_remote_hardening.py -q`로 Remote MCP 범위의 회귀 테스트를 실행한다. 공식 MCP SDK 클라이언트나 MCP Inspector는 모델 API 키 없이 initialize, tools/list, tools/call, 다운로드를 검증할 수 있다. 위 OpenAI Responses API 예제의 실호출은 별도 API 인증이 있는 경우에만 수행한다.
 
+모델 API 키 없는 전체 흐름 시험: `python examples/verify_remote_mcp.py --url https://<실제서버>/mcp --output artifacts/remote-verification`. 공식 MCP SDK로 파일 업로드, 세 도구 호출, ZIP/XML 검사, 원본 보존과 다운로드를 확인한다. `requirements-remote.txt` 외의 모델 SDK나 모델 API 인증은 필요하지 않다.
+
 Linux remote 서버는 native binary `.hwp` 편집을 제공하지 않는다. 서식 보존 편집 입력은 `.hwpx`를 사용한다.
