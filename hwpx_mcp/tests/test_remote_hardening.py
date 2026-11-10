@@ -126,3 +126,22 @@ def test_render_url_and_upload_limit_are_used_without_manual_base_url(monkeypatc
     app.include_router(build_download_router())
     with TestClient(app) as client:
         assert '최대 10MB' in client.get('/upload').text
+
+
+def test_browser_and_windows_mime_aliases_upload_real_hwpx(tmp_path, monkeypatch):
+    monkeypatch.setenv('HWPX_OUTPUT_DIR', str(tmp_path))
+    monkeypatch.setenv('PUBLIC_BASE_URL', 'https://example.test')
+    result = create_remote_hwpx_document('source.hwpx', '브라우저 업로드 시험')
+    original = next(tmp_path.glob('*/source.hwpx')).read_bytes()
+    app = FastAPI()
+    app.include_router(build_download_router())
+    with TestClient(app) as client:
+        page = client.get('/upload').text
+        assert "'Content-Type': 'application/vnd.hancom.hwpx'" in page
+        for mime in ['application/vnd.hancom.hwpx', 'application/haansofthwpx']:
+            response = client.post('/uploads', content=original,
+                                   headers={'Content-Type': mime, 'X-File-Name': 'template.hwpx'})
+            assert response.status_code == 200
+        assert client.post('/uploads', content=b'%PDF-fake', headers={
+            'Content-Type': 'application/vnd.hancom.hwpx', 'X-File-Name': 'fake.hwpx',
+        }).status_code == 400

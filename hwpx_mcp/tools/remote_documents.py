@@ -52,6 +52,7 @@ _EPHEMERAL_SIGNING_KEY = secrets.token_bytes(32)
 _UPLOAD_MIME_TYPES = {
     HWPX_MIME_TYPE,
     "application/hwp+zip",
+    "application/haansofthwpx",
     "application/zip",
     "application/octet-stream",
 }
@@ -114,7 +115,7 @@ upload.addEventListener('click', async () => {
   try {
     const response = await fetch('/uploads', {
       method: 'POST', body: selected,
-      headers: {'Content-Type': selected.type || 'application/octet-stream',
+      headers: {'Content-Type': 'application/vnd.hancom.hwpx',
                 'X-File-Name': encodeURIComponent(selected.name)}
     });
     const data = await response.json();
