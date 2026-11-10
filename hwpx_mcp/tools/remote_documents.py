@@ -563,12 +563,14 @@ def register_remote_document_tools(mcp: Any) -> None:
             }
 
     file_tool_meta = {"openai/fileParams": ["template_file"]}
-    fill_tool_meta = {
-        **file_tool_meta,
-        "ui": {"resourceUri": WIDGET_URI, "visibility": ["model", "app"]},
-        "openai/outputTemplate": WIDGET_URI,
-        "openai/widgetAccessible": True,
-    }
+    fill_tool_meta = dict(file_tool_meta)
+    # 호스트별 화면 호환성을 확인한 경우에만 자동 UI를 켭니다.
+    if os.getenv("HWPX_ENABLE_WIDGET", "").strip().lower() in {"1", "true", "yes"}:
+        fill_tool_meta.update({
+            "ui": {"resourceUri": WIDGET_URI, "visibility": ["model", "app"]},
+            "openai/outputTemplate": WIDGET_URI,
+            "openai/widgetAccessible": True,
+        })
 
     @mcp.tool(
         title="Inspect HWPX template",
@@ -621,6 +623,7 @@ def register_remote_document_tools(mcp: Any) -> None:
         ``table_index``, ``row``, ``column`` or by ``label`` (the next cell is
         filled). Paragraph items accept ``content`` and optional ``after_text``.
         The original upload is never modified.
+        Present the returned download_url as a normal clickable Markdown link.
         """
         try:
             return await asyncio.to_thread(

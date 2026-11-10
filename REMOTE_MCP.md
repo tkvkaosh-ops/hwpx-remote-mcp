@@ -100,6 +100,8 @@ Claude Custom Connector에 공개 HTTPS MCP URL(`https://<domain>/mcp`)을 등�
 
 ChatGPT의 developer mode에서 같은 HTTPS `/mcp` URL로 앱을 만든다. `template_file`은 ChatGPT file parameter로 선언되어 있으며, 선택 UI는 지원되는 경우 `window.openai.selectFiles`, `uploadFile`, `getFileDownloadUrl`을 feature detection으로 사용한다.
 
+자동 내장 UI는 기본적으로 끈다. 현재 ChatGPT 호스트에서 도구 처리 성공 뒤 부가 화면의 로드 시간 초과가 관찰되어, 기본 사용은 직접 첨부와 일반 Markdown 다운로드 링크로 동작한다. `/upload` 공통 화면도 사용할 수 있다. 선택 UI resource는 계속 제공하며, 해당 호스트에서 호환성을 검증한 운영자만 `HWPX_ENABLE_WIDGET=true`로 자동 표시를 켤 수 있다.
+
 ## OpenAI Responses API
 
 `examples/openai_responses_mcp.py`를 사용한다.
